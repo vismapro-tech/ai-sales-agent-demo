@@ -184,6 +184,35 @@ def get_order_status(order_id: str):
     return MOCK_ORDERS.get(order_id.strip())
 
 
+def build_context_from_history(conversation: list) -> str:
+    """
+    Συγκεντρώνει όλη την ιστορία συνομιλίας σε ένα context string
+    για καλύτερη αναζήτηση και κατανόηση της ανάγκης του πελάτη.
+    
+    Input: [
+        {"role": "user", "text": "θέλω δράπανο"},
+        {"role": "assistant", "text": "Τι δουλειά;"},
+        {"role": "user", "text": "μπετόν"}
+    ]
+    
+    Output: "θέλω δράπανο. Γιατί: Τι δουλειά;. Απάντηση: μπετόν"
+    """
+    if not conversation:
+        return ""
+    
+    context_parts = []
+    for msg in conversation:
+        role = msg.get("role", "").lower()
+        text = msg.get("text", "").strip()
+        if text:
+            if role == "user":
+                context_parts.append(f"Πελάτης: {text}")
+            elif role == "assistant":
+                context_parts.append(f"Agent: {text}")
+    
+    return " → ".join(context_parts)
+
+
 if __name__ == "__main__":
     tests = [
         "θέλω να κόψω έναν τοίχο από μπετόν",

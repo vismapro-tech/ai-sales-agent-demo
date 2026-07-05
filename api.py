@@ -7,6 +7,7 @@ from agent_core import (
     get_clarifying_question,
     recommend_tiered,
     get_order_status,
+    build_context_from_history,
     SHOP_PHONE,
 )
 
@@ -34,12 +35,16 @@ def health():
 @app.post("/recommend")
 async def recommend(request: Request):
     """
-    Main endpoint: chat message from Tidio → agent logic → recommendations
+    Main endpoint: chat message from Tidio (+ conversation history) → agent logic → recommendations
     
     Expected JSON:
     {
         "message": "θέλω ένα δράπανο",
-        "conversation_history": [optional, for multi-turn]
+        "conversation": [  ← OPTIONAL: full history για καλύτερο context
+            {"role": "user", "text": "θέλω δράπανο"},
+            {"role": "assistant", "text": "Τι δουλειά;"},
+            {"role": "user", "text": "μπετόν"}
+        ]
     }
     
     Returns:
@@ -53,6 +58,7 @@ async def recommend(request: Request):
     try:
         data = await request.json()
         user_message = data.get("message", "").strip()
+        conversation = data.get("conversation", [])
         
         if not user_message:
             return JSONResponse(
@@ -60,7 +66,11 @@ async def recommend(request: Request):
                 status_code=400,
             )
         
-        # Intent classification
+        # Συγκεντρώνει ολόκληρο το context από την ιστορία
+        full_context = build_context_from_history(conversation)
+        search_query = f"{full_context} {user_message}".strip() if full_context else user_message
+        
+        # Intent classification (βάσει του τρέχοντος μηνύματος, όχι του context)
         intent = classify_intent(user_message)
         
         # Order status query
@@ -103,12 +113,12 @@ async def recommend(request: Request):
                 "shop_phone": SHOP_PHONE,
             })
         
-        # Direct product search
+        # Direct product search — χρησιμοποιεί full context
         else:
-            result = recommend_tiered(user_message)
+            result = recommend_tiered(search_query)  # ← χρησιμοποιεί το συγκεντρωμένο context
             if result["products"]:
                 note = " (από τον πλήρη κατάλογο)" if result.get("source") == "full_catalog" else ""
-                reply = f"Βάσει αυτής της ανάγνωσης, να τι προτείνω από την κατηγορία **{result['category']}**{note}:"
+                reply = f"Βάσει αυτών που μου είπες, να τι προτείνω από την κατηγορία **{result['category']}**{note}:"
                 
                 # Format products for response
                 products_data = [
@@ -148,33 +158,43 @@ async def recommend(request: Request):
 @app.post("/clarify")
 async def clarify(request: Request):
     """
-    Follow-up: after clarifying question, AI combines original need + clarification
+    Follow-up: full conversation history passed in
     
     Expected JSON:
     {
-        "original_need": "θέλω να κόψω έναν τοίχο",
-        "clarification": "μπετόν, επαγγελματική χρήση"
+        "conversation": [
+            {"role": "user", "text": "θέλω να κόψω έναν τοίχο"},
+            {"role": "assistant", "text": "Τι υλικό;"},
+            {"role": "user", "text": "μπετόν"}
+        ]
     }
     
     Returns: same as /recommend
     """
     try:
         data = await request.json()
-        original = data.get("original_need", "").strip()
-        clarification = data.get("clarification", "").strip()
+        conversation = data.get("conversation", [])
         
-        if not original or not clarification:
+        if not conversation:
             return JSONResponse(
-                {"error": "Missing original_need or clarification"},
+                {"error": "Missing conversation"},
                 status_code=400,
             )
         
-        combined_query = f"{original} {clarification}"
+        # Συγκεντρώνει ολόκληρη την ιστορία
+        combined_query = build_context_from_history(conversation)
+        
+        if not combined_query:
+            return JSONResponse(
+                {"error": "Empty conversation"},
+                status_code=400,
+            )
+        
         result = recommend_tiered(combined_query)
         
         if result["products"]:
             note = " (από τον πλήρη κατάλογο)" if result.get("source") == "full_catalog" else ""
-            reply = f"Τέλεια! Βάσει αυτού, να τι προτείνω από την κατηγορία **{result['category']}**{note}:"
+            reply = f"Τέλεια! Βάσει αυτών, να τι προτείνω από την κατηγορία **{result['category']}**{note}:"
             
             products_data = [
                 {
