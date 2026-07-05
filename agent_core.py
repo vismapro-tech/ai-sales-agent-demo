@@ -46,10 +46,12 @@ def _best_category(query: str, top_n_categories: int = 1):
 
 def recommend_tiered(query: str, max_price: float | None = None):
     """Core Pre-Sales function: find best category for the need, return
-    up to 3 products (cheap/medium/expensive) with photo + link."""
+    up to 3 products (cheap/medium/expensive) with photo + link.
+    Falls back to the full 1027-product catalog if the curated 422-product
+    subset has no good match (data coverage gap)."""
     categories = _best_category(query)
     if not categories:
-        return {"category": None, "products": []}
+        return _fallback_full_catalog(query, max_price)
 
     category = categories[0]
     conn = sqlite3.connect(DB)
@@ -64,6 +66,9 @@ def recommend_tiered(query: str, max_price: float | None = None):
     rows = conn.execute(sql, params).fetchall()
     conn.close()
 
+    if not rows:
+        return _fallback_full_catalog(query, max_price)
+
     products = []
     for i, r in enumerate(rows[:3]):
         tier = TIER_LABELS[i] if len(rows[:3]) == 3 else ("Προτεινόμενο" if len(rows) == 1 else TIER_LABELS[i])
@@ -74,7 +79,74 @@ def recommend_tiered(query: str, max_price: float | None = None):
             "url": r[6], "image": r[7], "use_case": r[8],
         })
 
-    return {"category": category, "products": products}
+    return {"category": category, "products": products, "source": "curated"}
+
+
+with open("tfidf_index.pkl", "rb") as f:
+    _full_idx = pickle.load(f)
+_full_ids = _full_idx["ids"]
+_full_vectorizer = _full_idx["vectorizer"]
+_full_matrix = _full_idx["matrix"]
+
+
+def _fallback_full_catalog(query: str, max_price: float | None = None):
+    """Second-tier search across the full 1027-product catalog, used when the
+    curated 422-product subset has no coverage for this need."""
+    q_vec = _full_vectorizer.transform([query])
+    sims = cosine_similarity(q_vec, _full_matrix).flatten()
+    ranked = sorted(zip(_full_ids, sims), key=lambda x: x[1], reverse=True)
+    top_ids = [pid for pid, score in ranked if score > FULL_CATALOG_MIN_THRESHOLD][:10]
+
+    if not top_ids:
+        return {"category": None, "products": [], "source": "none"}
+
+    conn = sqlite3.connect("products.db")
+    placeholders = ",".join("?" * len(top_ids))
+    sql = f"""SELECT id, name, manufacturer, category, final_price_vat, quantity,
+                     stock_status, product_url, image
+              FROM products WHERE id IN ({placeholders}) AND quantity > 0"""
+    params = list(top_ids)
+    if max_price is not None:
+        sql += " AND final_price_vat <= ?"
+        params.append(max_price)
+    sql += " ORDER BY final_price_vat ASC LIMIT 3"
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+
+    if not rows:
+        return {"category": None, "products": [], "source": "none"}
+
+    products = []
+    for i, r in enumerate(rows):
+        tier = TIER_LABELS[i] if len(rows) == 3 else "Προτεινόμενο"
+        products.append({
+            "tier": tier,
+            "id": r[0], "name": r[1], "brand": r[2], "price": r[4],
+            "quantity": r[5], "stock_status": r[6],
+            "url": r[7], "image": r[8], "use_case": None,
+        })
+
+    return {"category": rows[0][3], "products": products, "source": "full_catalog"}
+
+
+# --- Lead capture when nothing matches at all ---
+
+def save_lead(phone: str, need_description: str):
+    """Persist a lead when the agent couldn't find a matching product.
+    Local CSV for now — swap for a write to the real Leads Google Sheet later."""
+    import csv
+    from datetime import datetime
+    file_exists = False
+    try:
+        with open("leads.csv", "r"):
+            file_exists = True
+    except FileNotFoundError:
+        pass
+    with open("leads.csv", "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(["timestamp", "phone", "need_description"])
+        writer.writerow([datetime.now().isoformat(), phone, need_description])
 
 
 # --- Intent classification (rule-based fallback; swap for LLM when API key available) ---
@@ -89,6 +161,7 @@ VAGUE_NEED_PATTERNS = [
 ]
 
 MIN_RELEVANCE_THRESHOLD = 0.08
+FULL_CATALOG_MIN_THRESHOLD = 0.15  # stricter: broader/noisier catalog, prefer lead capture over a wrong guess
 
 
 def classify_intent(message: str) -> str:
