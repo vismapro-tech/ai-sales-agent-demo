@@ -74,8 +74,9 @@ if user_input:
                 reply_text = f"Να τι προτείνω από την κατηγορία **{result['category']}**:"
                 st.session_state.messages.append({"role": "assistant", "content": reply_text, "products": result["products"]})
             else:
-                reply = "Δεν βρήκα κάτι σχετικό. Πες μου με άλλα λόγια τι ψάχνεις;"
-                st.session_state.messages.append({"role": "assistant", "content": reply})
+                question = get_clarifying_question(user_input)
+                st.session_state.pending_need = user_input
+                st.session_state.messages.append({"role": "assistant", "content": question})
 
     st.rerun()
 

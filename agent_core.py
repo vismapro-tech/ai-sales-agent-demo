@@ -21,10 +21,11 @@ def _best_category(query: str, top_n_categories: int = 1):
     q_vec = _vectorizer.transform([query])
     sims = cosine_similarity(q_vec, _matrix).flatten()
     ranked = sorted(zip(_ids, sims), key=lambda x: x[1], reverse=True)
-    top_ids = [pid for pid, score in ranked if score > 0][:15]
+    top_ids = [pid for pid, score in ranked if score > MIN_RELEVANCE_THRESHOLD][:15]
     if not top_ids:
         return []
 
+    score_by_id = dict(ranked)
     conn = sqlite3.connect(DB)
     placeholders = ",".join("?" * len(top_ids))
     rows = conn.execute(
@@ -32,10 +33,15 @@ def _best_category(query: str, top_n_categories: int = 1):
     ).fetchall()
     conn.close()
 
-    # Count category frequency among top matches -> pick the dominant category
-    from collections import Counter
-    cat_counts = Counter(cat for _, cat in rows)
-    return [c for c, _ in cat_counts.most_common(top_n_categories)]
+    # Weight by relevance score, not raw frequency, so a single strong match
+    # beats several weak matches from an unrelated category.
+    from collections import defaultdict
+    cat_scores = defaultdict(float)
+    for pid, cat in rows:
+        cat_scores[cat] += score_by_id.get(pid, 0)
+
+    ranked_cats = sorted(cat_scores.items(), key=lambda x: x[1], reverse=True)
+    return [c for c, _ in ranked_cats[:top_n_categories]]
 
 
 def recommend_tiered(query: str, max_price: float | None = None):
@@ -75,11 +81,14 @@ def recommend_tiered(query: str, max_price: float | None = None):
 
 ORDER_PATTERNS = [r"παραγγελ", r"\border\b", r"tracking", r"απεστ", r"κατάσταση.*παραγγελ"]
 VAGUE_NEED_PATTERNS = [
-    r"θέλω να (κόψω|τρυπήσω|σπάσω|καθαρίσω|βάψω|λειάν)",
+    r"θέλω να (κόψω|τρυπήσω|σπάσω|καθαρίσω|βάψω|λειάν|τρίψω|γυαλίσω|βιδώσω|ξεβιδώσω|στερεώσω|σφίξω|μετρήσω)",
     r"χρειάζομαι κάτι (για|να)",
     r"τι μου προτείνετε",
     r"ψάχνω κάτι",
+    r"\bτοίχο\b|\bτοίχους\b|\bτούβλο\b|\bπλακάκι\b",
 ]
+
+MIN_RELEVANCE_THRESHOLD = 0.08
 
 
 def classify_intent(message: str) -> str:
