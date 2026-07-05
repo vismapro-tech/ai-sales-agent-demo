@@ -129,25 +129,8 @@ def _fallback_full_catalog(query: str, max_price: float | None = None):
     return {"category": rows[0][3], "products": products, "source": "full_catalog"}
 
 
-# --- Lead capture when nothing matches at all ---
-
-def save_lead(phone: str, need_description: str):
-    """Persist a lead when the agent couldn't find a matching product.
-    Local CSV for now — swap for a write to the real Leads Google Sheet later."""
-    import csv
-    from datetime import datetime
-    file_exists = False
-    try:
-        with open("leads.csv", "r"):
-            file_exists = True
-    except FileNotFoundError:
-        pass
-    with open("leads.csv", "a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        if not file_exists:
-            writer.writerow(["timestamp", "phone", "need_description"])
-        writer.writerow([datetime.now().isoformat(), phone, need_description])
-
+# --- Shop contact info ---
+SHOP_PHONE = "210 574 1109"
 
 # --- Intent classification (rule-based fallback; swap for LLM when API key available) ---
 
@@ -161,7 +144,7 @@ VAGUE_NEED_PATTERNS = [
 ]
 
 MIN_RELEVANCE_THRESHOLD = 0.08
-FULL_CATALOG_MIN_THRESHOLD = 0.15  # stricter: broader/noisier catalog, prefer lead capture over a wrong guess
+FULL_CATALOG_MIN_THRESHOLD = 0.15  # stricter: broader/noisier catalog, prefer offering phone over a wrong guess
 
 
 def classify_intent(message: str) -> str:

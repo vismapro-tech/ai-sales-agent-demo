@@ -1,6 +1,6 @@
 import streamlit as st
 import re
-from agent_core import classify_intent, get_clarifying_question, recommend_tiered, get_order_status, save_lead
+from agent_core import classify_intent, get_clarifying_question, recommend_tiered, get_order_status, SHOP_PHONE
 
 st.set_page_config(page_title="AI Sales Agent — Demo", page_icon="🛠️", layout="centered")
 st.title("🛠️ AI Sales Agent — Demo (χωρίς εξάρτηση από το live site)")
@@ -10,8 +10,6 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "pending_need" not in st.session_state:
     st.session_state.pending_need = None
-if "pending_lead_capture" not in st.session_state:
-    st.session_state.pending_lead_capture = None
 
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
@@ -36,23 +34,12 @@ for msg in st.session_state.messages:
 
 user_input = st.chat_input("Γράψε το μήνυμά σου σαν πελάτης...")
 
-LEAD_CAPTURE_MSG = "Δεν έχω αυτή τη στιγμή ακριβή πρόταση για αυτή την ανάγκη. Δώσε μου το τηλέφωνό σου και θα επικοινωνήσει μαζί σου κάποιος συνάδελφος από τις πωλήσεις σήμερα."
+NO_MATCH_MSG = f"Δεν έχω αυτή τη στιγμή ακριβή πρόταση για αυτή την ανάγκη. Μπορείς να καλέσεις το μαγαζί στο **{SHOP_PHONE}** — θα σε βοηθήσουν να βρεις ακριβώς αυτό που ψάχνεις. 📞"
 
 if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
 
-    if st.session_state.pending_lead_capture:
-        phone_match = re.search(r"\d[\d\s\-]{7,}", user_input)
-        if phone_match:
-            phone = re.sub(r"[\s\-]", "", phone_match.group())
-            save_lead(phone, st.session_state.pending_lead_capture)
-            st.session_state.pending_lead_capture = None
-            reply = f"Ευχαριστούμε! Καταγράψαμε το {phone} — θα επικοινωνήσει μαζί σου συνάδελφος από τις πωλήσεις σύντομα. 👍"
-        else:
-            reply = "Δεν κατάλαβα αριθμό τηλεφώνου — μπορείς να τον ξαναγράψεις;"
-        st.session_state.messages.append({"role": "assistant", "content": reply})
-
-    elif st.session_state.pending_need:
+    if st.session_state.pending_need:
         combined_query = f"{st.session_state.pending_need} {user_input}"
         st.session_state.pending_need = None
         result = recommend_tiered(combined_query)
@@ -61,8 +48,7 @@ if user_input:
             reply_text = f"Βάσει αυτού που μου είπες, να τι προτείνω από την κατηγορία **{result['category']}**{note}:"
             st.session_state.messages.append({"role": "assistant", "content": reply_text, "products": result["products"]})
         else:
-            st.session_state.pending_lead_capture = combined_query
-            st.session_state.messages.append({"role": "assistant", "content": LEAD_CAPTURE_MSG})
+            st.session_state.messages.append({"role": "assistant", "content": NO_MATCH_MSG})
 
     else:
         intent = classify_intent(user_input)
@@ -93,9 +79,8 @@ if user_input:
                 reply_text = f"Να τι προτείνω από την κατηγορία **{result['category']}**{note}:"
                 st.session_state.messages.append({"role": "assistant", "content": reply_text, "products": result["products"]})
             else:
-                question = get_clarifying_question(user_input)
-                st.session_state.pending_need = user_input
-                st.session_state.messages.append({"role": "assistant", "content": question})
+                # Weak match on direct product query — offer phone number
+                st.session_state.messages.append({"role": "assistant", "content": NO_MATCH_MSG})
 
     st.rerun()
 
@@ -108,10 +93,9 @@ with st.sidebar:
     st.code("θέλω να τρίψω τοίχο")
     st.divider()
     st.caption("⚠️ Το order tracking χρησιμοποιεί mock data (12345, 99999) — θα συνδεθεί με το πραγματικό Vouchers Sheet αργότερα.")
-    st.caption("📞 Όταν δεν βρίσκεται τίποτα, ο agent ζητά τηλέφωνο για επικοινωνία από τις πωλήσεις (αποθηκεύεται σε leads.csv).")
+    st.caption(f"📞 Όταν δεν βρίσκεται τίποτα, ο agent δίνει το τηλέφωνο του μαγαζιού: {SHOP_PHONE}")
     if st.button("🔄 Reset conversation"):
         st.session_state.messages = []
         st.session_state.pending_need = None
-        st.session_state.pending_lead_capture = None
         st.rerun()
 
